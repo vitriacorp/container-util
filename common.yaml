@@ -18,7 +18,7 @@
         user ftpdown ftpdown 
         binary
         cd ${PKG_ROOT}/${CI_PROJECT_NAME}
-        put ${CI_PROJECT_NAME}-${PACKAGE_TAG}.tar.gz
+        put ${CI_PROJECT_NAME}-${PACKAGE_TAG}.tar.gz /y
         close
         bye
       !
