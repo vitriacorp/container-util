@@ -1,0 +1,73 @@
+.package_do_tpl:
+  image: ${IMAGE}
+  script:
+    - export AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+    - export AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+    # compress project content
+    - tar -zcvf ${CI_PROJECT_NAME}.tar.gz .
+    # upload to S3 using tag name
+    - aws s3api put-object  --bucket ${BUCKET} --key do/${CI_PROJECT_NAME}/${CI_COMMIT_TAG}/${CI_PROJECT_NAME}.tar.gz --body ${CI_PROJECT_NAME}.tar.gz
+  only:
+  # only build tags (tags represent releases)
+  - tags
+
+.deploy_tpl:
+  stage: deploy
+  image: ${IMAGE}
+  script:
+    # create namespace
+    - kubectl get ns ${KUBE_NAMESPACE} || kubectl create ns ${KUBE_NAMESPACE}
+    # pull chart
+    - export HELM_EXPERIMENTAL_OCI=1
+    - helm3 registry login -u ${CI_REGISTRY_USER} -p ${CI_JOB_TOKEN} ${CI_REGISTRY}
+    - helm3 chart pull ${CI_REGISTRY_IMAGE}:latest
+    - helm3 chart export ${CI_REGISTRY_IMAGE}:latest
+    # upgrade existing or install new chart
+    - helm3 -n ${KUBE_NAMESPACE} upgrade ${CI_PROJECT_NAME} ${CI_PROJECT_NAME} ${CHART_SET_VALUES} --wait || helm3 -n ${KUBE_NAMESPACE} install ${CI_PROJECT_NAME} ${CI_PROJECT_NAME} ${CHART_SET_VALUES} --wait
+    # annotate resources with appropriate info for Deploy Board to work
+    - kubectl annotate --overwrite=true pods        --selector=app=${CI_PROJECT_NAME} --selector=release=${CI_PROJECT_NAME} "app.gitlab.com/app"="${CI_PROJECT_PATH_SLUG}" "app.gitlab.com/env"="${CI_ENVIRONMENT_SLUG}"
+    - kubectl annotate --overwrite=true deployment  --selector=app=${CI_PROJECT_NAME} --selector=release=${CI_PROJECT_NAME} "app.gitlab.com/app"="${CI_PROJECT_PATH_SLUG}" "app.gitlab.com/env"="${CI_ENVIRONMENT_SLUG}"
+    - kubectl annotate --overwrite=true replicaset  --selector=app=${CI_PROJECT_NAME} --selector=release=${CI_PROJECT_NAME} "app.gitlab.com/app"="${CI_PROJECT_PATH_SLUG}" "app.gitlab.com/env"="${CI_ENVIRONMENT_SLUG}"
+    - kubectl annotate --overwrite=true statefulset --selector=app=${CI_PROJECT_NAME} --selector=release=${CI_PROJECT_NAME} "app.gitlab.com/app"="${CI_PROJECT_PATH_SLUG}" "app.gitlab.com/env"="${CI_ENVIRONMENT_SLUG}"
+    - kubectl annotate --overwrite=true daemonset   --selector=app=${CI_PROJECT_NAME} --selector=release=${CI_PROJECT_NAME} "app.gitlab.com/app"="${CI_PROJECT_PATH_SLUG}" "app.gitlab.com/env"="${CI_ENVIRONMENT_SLUG}"
+
+
+.build_tpl:
+  stage: build
+  image: ${IMAGE}
+  script:
+    # authenticate with chart registry
+    - helm3 registry login -u ${CI_REGISTRY_USER} -p ${CI_JOB_TOKEN} ${CI_REGISTRY}
+    # save chart
+    - helm3 chart save . ${CI_REGISTRY_IMAGE}:latest
+    - helm3 chart save . ${CI_REGISTRY_IMAGE}:${CI_COMMIT_SHORT_SHA}
+    # push charts
+    - helm3 chart push   ${CI_REGISTRY_IMAGE}:latest
+    - helm3 chart push   ${CI_REGISTRY_IMAGE}:${CI_COMMIT_SHORT_SHA}
+    
+.deploy_review_tpl:
+  extends: .deploy_tpl
+  environment:
+    name: review/${CI_COMMIT_REF_NAME}
+    url: https://${CI_PROJECT_NAME}.${CI_ENVIRONMENT_SLUG}.${KUBE_INGRESS_BASE_DOMAIN}
+  only:
+    - branches
+  except:
+    - master
+
+.deploy_staging_tpl:
+  extends: .deploy_tpl
+  environment:
+    name: staging
+    url: https://${CI_PROJECT_NAME}.staging.${KUBE_INGRESS_BASE_DOMAIN}
+  only:
+  - master
+
+.deploy_prod_tpl:
+  extends: .deploy_tpl
+  environment:
+    name: production
+    url: https://${CI_PROJECT_NAME}.production.${KUBE_INGRESS_BASE_DOMAIN}
+  when: manual
+  only:
+  - master
