@@ -1,0 +1,25 @@
+.deploy_package_tpl:
+  image: "registry.gitlab.com/vitria/do/do-deployer/master:latest"
+  script:
+    - | 
+      if [[ ".${PACKAGE_TAG}" == "." ]]; then
+          PACKAGE_TAG=0.0.1
+      fi
+      if [[ ".${SFTP_SERVER}" == "." ]]; then
+          SFTP_SERVER=vsftpd.default
+      fi
+      if [[ ".${PKG_ROOT}" == "." ]]; then
+          PKG_ROOT="do/packages"
+      fi
+      tar -zcvf ${CI_PROJECT_NAME}-${PACKAGE_TAG}.tar.gz --warning=no-file-changed --exclude=.git --exclude=${CI_PROJECT_NAME}-${PACKAGE_TAG}.tar.gz --exclude=*.tar.gz . || echo "something wrong..."
+      echo "Generate ${CI_PROJECT_NAME}-${PACKAGE_TAG}.tar.gz"
+      ftp -n <<!
+        open ${SFTP_SERVER}
+        user ftpdown ftpdown 
+        binary
+        cd ${PKG_ROOT}/${CI_PROJECT_NAME}
+        put ${CI_PROJECT_NAME}-${PACKAGE_TAG}.tar.gz
+        close
+        bye
+      !
+    - echo "Upload file to ftp://${SFTP_SERVER}/${PKG_ROOT}/${CI_PROJECT_NAME}"
